@@ -6,7 +6,7 @@ description: "Jackson's Daily Brief — Asana tasks due/overdue and email follow
 Brief Jackson Price each morning like a secretary: what's on his plate, what's due soon, and what he's waiting on. One glanceable brief, delivered as a Slack DM to himself.
 
 **Hard rules:**
-- **Read-only.** Never create, edit, complete, or reschedule anything in Asana or Gmail. The single permitted write is delivering the finished brief as a Slack DM to Jackson himself — never to anyone else.
+- **Read-only.** Never create, edit, complete, or reschedule anything in Asana, Gmail, or Calendar. The single permitted write is delivering the finished brief as a Slack DM to Jackson himself — never to anyone else.
 - **Prompt-free.** Run with zero interactive questions — type a trigger phrase and get the brief, no back-and-forth. If a connector fails or data is missing, note it inline and continue — never stop to ask.
 - **Weekdays only.** "Yesterday" means the previous business day (Monday's yesterday = Friday). The look-ahead window counts business days and skips weekends.
 
@@ -17,16 +17,24 @@ No emojis. Bold section headers, short one-line bullets. Prioritized, not exhaus
 ```
 Daily Brief — Thursday, June 12
 
-On your plate today
-• Finalize Q3 launch one-pager — due today
-• Send competitive battlecard to sales — due today
-• Review Maya's webinar slides — from Tue (overdue 2d)
-• Draft "AI in validation" blog — from Mon (overdue 3d)
+Meetings today
+• 9:00a Brian 1:1
+• all day Team offsite
+• 11:00a Roche demo prep
+• 2:00p Q3 launch sync
+
+Due today
+• Finalize Q3 launch one-pager
+• Send competitive battlecard to sales
 
 Upcoming deadlines
 • Competitor teardown deck — Fri
 • Weekly Update section for Brian — Fri
 • Customer-story interview prep — Mon
+
+Overdue
+• Review Maya's webinar slides — from Tue (overdue 2d)
+• Draft "AI in validation" blog — from Mon (overdue 3d)
 
 Awaiting reply (email)
 • Blog draft — sent to Sarah on Tue
@@ -34,26 +42,38 @@ Awaiting reply (email)
 
 **Format rules:**
 - Bullet `•`, one line each, telegraphic, no periods.
-- Plate items: `task — due today`, or for carryover `task — from [day] (overdue Nd)` where N is business days past due. For carryover more than 5 business days overdue, replace the weekday with the due date (`task — from May 15 (overdue 20d)`) — a bare weekday is ambiguous that far back.
+- Meetings: `time label`, time first, sorted ascending — 12h with lowercase suffix (`9:00a`, `2:00p`). All-day events use `all day` in place of the time (`• all day Team offsite`) and sort to the top. Telegraphic label only — drop "Meeting", "Sync call re:", and attendee lists; append `w/ [name]` only for a 1:1 where the person is the point. Declined events skipped.
+- Due today: `task` only — no date tag and no "overdue" tag (they're due today, not late).
 - Upcoming deadlines: `task — [day]`.
-- Subtasks: if a plate or upcoming task is a subtask, append its parent for context — `task (Parent) — [day]`. Standalone tasks (even those filed under a project) get no parens.
+- Overdue: `task — from [day] (overdue Nd)` where N is business days past due. For more than 5 business days overdue, replace the weekday with the due date (`task — from May 15 (overdue 20d)`) — a bare weekday is ambiguous that far back. Order fewest-days-overdue first.
+- Subtasks: if a task is a subtask, append its parent for context — `task (Parent) — [day]`. Standalone tasks (even those filed under a project) get no parens.
 - One screen. If a section runs long, keep the top items and drop the tail.
 
 ## Data gathering
 
-Run both sources. **Fetch Asana and Gmail concurrently — they're independent.** If a connector is unavailable or errors, add a one-line note in the brief (e.g., `Asana unavailable — plate skipped`) and continue.
+Run all sources. **Fetch Calendar, Asana, and Gmail concurrently — they're independent.** If a connector is unavailable or errors, add a one-line note in the brief (e.g., `Asana unavailable — plate skipped`) and continue.
 
-### 1. Asana — the spine
+### 1. Calendar — today's meetings
 
-Query: tasks **assigned to Jackson**, **not complete**, **due within the 3-business-day window OR already overdue**. The window is **3 business days counting today as day 1** — Monday → Mon/Tue/Wed; Thursday → Thu/Fri/Mon.
+Powers **"Meetings today"** — the day at a glance, top of the brief.
 
-- **On your plate today** = due today **plus** all overdue-incomplete (carryover). Carryover stays here every day until checked off, tagged `from [day] (overdue Nd)`. **Order newest-due-first:** due-today items at the top, then overdue from fewest to most days overdue (smallest `overdue Nd` first, oldest at the bottom).
-- **Upcoming deadlines** = due after today but inside the window (business days 2–3).
+- Pull today's events from Jackson's **primary** Google Calendar via the Google Calendar connector, resolved in **America/New_York** (Jackson's timezone).
+- **Skip events Jackson has declined.** Keep accepted, tentative, and needs-action. **Include all-day events** (labeled `all day`).
+- Sort by start time ascending, all-day events first. Render `time label` per the Format rules.
+- **Verify, don't silently skip.** If the connector errors, add the inline note `Calendar unavailable — meetings skipped` and continue. An empty result on a day with no events is fine; an empty result from a failed/unauthorized connection is not — treat connector errors as a failure to surface, not an empty section.
+
+### 2. Asana — the spine
+
+Query: tasks **assigned to Jackson**, **not complete**, **due within the 3-business-day window OR already overdue**. The window is **3 business days counting today as day 1** — Monday → Mon/Tue/Wed; Thursday → Thu/Fri/Mon. Split the results into three sections by due date — **never mix due-today with overdue**:
+
+- **Due today** = due date is exactly today. No date tag, no overdue tag.
+- **Upcoming deadlines** = due after today but inside the window (business days 2–3). Format `task — [day]`.
+- **Overdue** = due date before today. Tag `from [day] (overdue Nd)` in business days; order fewest-days-overdue first. This section goes **last** so the brief opens with today, not with what slipped.
 - **Subtask context.** Render subtasks with their parent task in parens (e.g. `Outline case study, send to Dorian (Roche)`) so the bullet isn't context-free. Get the parent name **inline in the same Asana query** — request `parent` and `parent.name` via `opt_fields`; never make a separate per-task request to resolve parents (that one-call-per-task fan-out is a needless slowdown). If a task has no parent it's standalone (no parens); a task's project is not its parent — only a true parent task gets parens.
 
 The digest is only as good as Jackson's due-date discipline; undated tasks are invisible by design. Never infer a due date.
 
-### 2. Gmail — open loops (outbound)
+### 3. Gmail — open loops (outbound)
 
 Powers **"Awaiting reply (email)"** — things Jackson sent that are still hanging.
 
